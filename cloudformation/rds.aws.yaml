@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create a PostgreSQL RDS instance with Secrets Manager integration
+
+Resources:
+  # Secrets Manager Secret for DB Credentials
+  MyDBSecret:
+    Type: "AWS::SecretsManager::Secret"
+    Properties:
+      Name: "my-postgresql-secret"
+      Description: "Credentials for my PostgreSQL RDS instance"
+      SecretString: !Sub |
+        {
+          "username": "postgres",
+          "password": "postgres"
+        }
+
+  MyDBSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for RDS instance"
+      SubnetIds:
+        - "subnet-042ad7bb9ea2d3926"
+        - "subnet-0fe113b489031951d"
+        - "subnet-0bba9d28301465792"
+        - "subnet-029b09bb9e7288e18"
+        - "subnet-0fbcfa84f1114589f"
+        - "subnet-08cd8c9cd7cb873c4"
+      DBSubnetGroupName: "my-db-subnet-group"
+
+  # Security Group for Lambda
+  LambdaRdsSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group for Lambda function"
+      VpcId: "vpc-0df861455dea4b820"  # Ensure this is the same VPC as the RDS instance
+      SecurityGroupEgress:
+        - IpProtocol: "-1"            # Allow all outbound traffic
+          FromPort: 0
+          ToPort: 0
+          CidrIp: "0.0.0.0/0"        # For testing purposes only; restrict in production
+
+  # Security Group for RDS
+  MyDBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Allow access to RDS PostgreSQL instance"
+      VpcId: "vpc-0df861455dea4b820"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaRdsSecurityGroup  # Allow access from Lambda SG
+
+  # RDS PostgreSQL Instance
+  MyDBInstance:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: "my-postgresql-instance"
+      DBInstanceClass: "db.t3.micro"
+      Engine: "postgres"
+      EngineVersion: "16.3"
+      DBName: "cloudproj"
+      MasterUsername: !Sub "{{resolve:secretsmanager:${MyDBSecret}::username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${MyDBSecret}::password}}"
+      AllocatedStorage: "20"
+      StorageType: "gp2"
+      VPCSecurityGroups:
+        - !Ref MyDBSecurityGroup
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      DeletionProtection: false
+
+Outputs:
+  DBInstanceEndpoint:
+    Description: "The endpoint of the RDS PostgreSQL instance"
+    Value: !GetAtt MyDBInstance.Endpoint.Address
+
+  SecretArn:
+    Description: "The ARN of the secret stored in Secrets Manager"
+    Value: !Ref MyDBSecret
+
+  DBSecurityGroupId:
+    Description: "The ID of the RDS security group"
+    Value: !Ref MyDBSecurityGroup
+
+  LambdaRdsSecurityGroupId:
+    Description: "The ID of the Lambda security group"
+    Value: !Ref LambdaRdsSecurityGroup

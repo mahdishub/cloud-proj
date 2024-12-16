@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to deploy a Node.js Lambda function with API Gateway integration for transactions
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Description: "IAM Role ARN for Lambda execution with necessary permissions"
+    Type: String
+  LambdaRdsSecurityGroupId:
+    Description: "Security Group ID for Lambda to access the RDS instance"
+    Type: String
+
+Resources:
+  # Lambda Function
+  MyLambdaFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "TransactionLambdaFunction"
+      Runtime: "nodejs16.x"
+      Handler: "index.handler"
+      Role: !Ref LambdaExecutionRoleArn
+      Code:
+        S3Bucket: "my-s3-lambda-code-bucket"
+        S3Key: "lambda-app.zip"
+      MemorySize: 128
+      Timeout: 700
+      VpcConfig:
+        SubnetIds:
+          - "subnet-042ad7bb9ea2d3926"
+          - "subnet-0fe113b489031951d"
+          - "subnet-0bba9d28301465792"
+          - "subnet-029b09bb9e7288e18"
+          - "subnet-0fbcfa84f1114589f"
+          - "subnet-08cd8c9cd7cb873c4"
+        SecurityGroupIds:
+          - !Ref LambdaRdsSecurityGroupId
+      Environment:
+        Variables:
+          NODE_ENV: "production"
+
+  # API Gateway
+  ApiGateway:
+    Type: "AWS::ApiGatewayV2::Api"
+    Properties:
+      Name: "TransactionApi"
+      ProtocolType: "HTTP"
+
+  # API Gateway Integration with Lambda
+  ApiGatewayIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MyLambdaFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
+
+  # API Gateway Route for /transaction (any method)
+  ApiGatewayTransactionRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: "ANY /transaction"
+      Target: !Sub "integrations/${ApiGatewayIntegration}"
+
+  # API Gateway Route for /transaction/{id} (any method)
+  ApiGatewayTransactionIdRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: "ANY /transaction/{id}"
+      Target: !Sub "integrations/${ApiGatewayIntegration}"
+
+  # API Gateway Deployment
+  ApiGatewayDeployment:
+    Type: "AWS::ApiGatewayV2::Deployment"
+    Properties:
+      ApiId: !Ref ApiGateway
+      Description: "Deployment for transaction routes"
+    DependsOn:
+      - ApiGatewayTransactionRoute
+      - ApiGatewayTransactionIdRoute
+
+  # API Gateway Stage
+  ApiGatewayStage:
+    Type: "AWS::ApiGatewayV2::Stage"
+    Properties:
+      ApiId: !Ref ApiGateway
+      DeploymentId: !Ref ApiGatewayDeployment
+      StageName: "prod"
+
+  # Permission for API Gateway to Invoke Lambda
+  LambdaInvokePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref MyLambdaFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway.ApiId}/*"
+
+Outputs:
+  LambdaFunctionName:
+    Description: "Name of the Lambda function"
+    Value: !Ref MyLambdaFunction
+
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function"
+    Value: !GetAtt MyLambdaFunction.Arn
+
+  ApiEndpoint:
+    Description: "API Gateway Endpoint for the Lambda function"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"

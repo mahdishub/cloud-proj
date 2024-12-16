@@ -5,6 +5,12 @@ const { DataTypes } = require("sequelize");
 // Database connection setup
 const sequelize = new Sequelize("postgres://postgres:postgres@my-postgresql-instance.cxdomsh2itks.us-east-1.rds.amazonaws.com:5432/cloudproj", {
   dialect: "postgres",
+  dialectOptions: {
+    ssl: {
+      require: true,                // Enforce SSL
+      rejectUnauthorized: false,    // Accept self-signed certificates
+    },
+  },
   logging: false,
 });
 

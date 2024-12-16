@@ -1,0 +1,53 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create an AWS Backup plan for an RDS PostgreSQL instance at 1:00 PM Halifax time
+
+Parameters:
+  RDSInstanceIdentifier:
+    Description: "The DBInstanceIdentifier of the RDS PostgreSQL instance to back up"
+    Type: String
+    Default: "my-postgresql-instance"
+
+Resources:
+  # Backup Vault
+  MyBackupVault:
+    Type: "AWS::Backup::BackupVault"
+    Properties:
+      BackupVaultName: "my-db-backup-vault"
+      EncryptionKeyArn: !Ref AWS::NoValue  # Use default AWS-managed key
+
+  # Backup Plan
+  MyBackupPlan:
+    Type: "AWS::Backup::BackupPlan"
+    Properties:
+      BackupPlan:
+        BackupPlanName: "my-db-backup-plan"
+        BackupPlanRule:
+          - RuleName: "OneTimeBackup"
+            TargetBackupVault: !Ref MyBackupVault
+            ScheduleExpression: "cron(0 17 * * ? *)"  # 5:00 PM UTC
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle:
+              DeleteAfterDays: 30  # Retain backups for 30 days
+            RecoveryPointTags:
+              Application: "CloudProject"
+
+  # Backup Selection
+  MyBackupSelection:
+    Type: "AWS::Backup::BackupSelection"
+    Properties:
+      BackupPlanId: !Ref MyBackupPlan
+      BackupSelection:
+        SelectionName: "RDSInstanceBackupSelection"
+        IamRoleArn: "arn:aws:iam::526713370612:role/LabRole"
+        Resources:
+          - !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${RDSInstanceIdentifier}"
+
+Outputs:
+  BackupPlanId:
+    Description: "The ID of the AWS Backup plan"
+    Value: !Ref MyBackupPlan
+
+  BackupVaultName:
+    Description: "The name of the AWS Backup vault"
+    Value: !Ref MyBackupVault
