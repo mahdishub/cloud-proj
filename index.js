@@ -58,8 +58,9 @@ exports.handler = async (event, context) => {
     // Initialize database
     await initializeDatabase();
 
-    const path = event.path; // Request path
-    const httpMethod = event.httpMethod;
+    const pathUncleaned = event.rawPath || event.path; // Support both HTTP API (V2) and REST API (V1)
+    const path = pathUncleaned.startsWith("/prod") ? pathUncleaned.substring(5) : pathUncleaned;
+    const httpMethod = event.httpMethod || event.requestContext.http.method;
     const body = event.body ? JSON.parse(event.body) : null;
 
     // API logic
