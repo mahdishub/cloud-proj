@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to deploy API Gateway with AWS Cognito integration using Client Credentials
+
+Parameters:
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function to integrate with API Gateway"
+    Type: String
+
+Resources:
+  # API Gateway
+  ApiGateway:
+    Type: "AWS::ApiGatewayV2::Api"
+    Properties:
+      Name: "TransactionApi"
+      ProtocolType: "HTTP"
+
+  # Cognito User Pool
+  CognitoUserPool:
+    Type: "AWS::Cognito::UserPool"
+    Properties:
+      UserPoolName: "TransactionApiUserPool"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: true
+          RequireSymbols: true
+      Schema:
+        - Name: "email"
+          Required: true
+          Mutable: true
+      AutoVerifiedAttributes:
+        - email
+
+  # Cognito Custom Scope
+  CognitoCustomScope:
+    Type: "AWS::Cognito::UserPoolResourceServer"
+    Properties:
+      Identifier: "transactions"
+      Name: "Transaction API Resource Server"
+      UserPoolId: !Ref CognitoUserPool
+      Scopes:
+        - ScopeName: "readwrite"
+          ScopeDescription: "Full access to transactions API"
+
+  # Cognito User Pool Client
+  CognitoUserPoolClient:
+    Type: "AWS::Cognito::UserPoolClient"
+    Properties:
+      ClientName: "TransactionApiClient"
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: true
+      AllowedOAuthFlows:
+        - "client_credentials"
+      AllowedOAuthScopes:
+        - "transactions/readwrite"
+      AllowedOAuthFlowsUserPoolClient: true
+    DependsOn: CognitoCustomScope   # Ensure the custom scope is created first
+
+  # Cognito User Pool Domain
+  CognitoUserPoolDomain:
+    Type: "AWS::Cognito::UserPoolDomain"
+    Properties:
+      Domain: "transaction-api" # Replace with a unique domain name
+      UserPoolId: !Ref CognitoUserPool
+
+  # API Gateway Cognito Authorizer
+  ApiGatewayCognitoAuthorizer:
+    Type: "AWS::ApiGatewayV2::Authorizer"
+    Properties:
+      ApiId: !Ref ApiGateway
+      AuthorizerType: "JWT"
+      IdentitySource:
+        - "$request.header.Authorization"
+      JwtConfiguration:
+        Audience:
+          - !Ref CognitoUserPoolClient
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}"
+      Name: "TransactionApiAuthorizer"
+
+  # API Gateway Integration with Lambda
+  ApiGatewayIntegration:
+    Type: "AWS::ApiGatewayV2::Integration"
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: "AWS_PROXY"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionArn}/invocations"
+      PayloadFormatVersion: "2.0"
+
+  # API Gateway Route for /transaction
+  ApiGatewayTransactionRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: "ANY /transaction"
+      AuthorizationType: "JWT"
+      AuthorizerId: !Ref ApiGatewayCognitoAuthorizer
+      Target: !Sub "integrations/${ApiGatewayIntegration}"
+
+  # API Gateway Route for /transaction/{id}
+  ApiGatewayTransactionIdRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: "ANY /transaction/{id}"
+      AuthorizationType: "JWT"
+      AuthorizerId: !Ref ApiGatewayCognitoAuthorizer
+      Target: !Sub "integrations/${ApiGatewayIntegration}"
+
+  # API Gateway Deployment
+  ApiGatewayDeployment:
+    Type: "AWS::ApiGatewayV2::Deployment"
+    Properties:
+      ApiId: !Ref ApiGateway
+      Description: "Deployment for transaction routes"
+    DependsOn:
+      - ApiGatewayTransactionRoute
+      - ApiGatewayTransactionIdRoute
+
+  # API Gateway Stage
+  ApiGatewayStage:
+    Type: "AWS::ApiGatewayV2::Stage"
+    Properties:
+      ApiId: !Ref ApiGateway
+      DeploymentId: !Ref ApiGatewayDeployment
+      StageName: "prod"
+
+  # Permission for API Gateway to Invoke Lambda
+  LambdaInvokePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref LambdaFunctionArn
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway.ApiId}/*"
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway Endpoint for the Lambda function"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  CognitoUserPoolId:
+    Description: "Cognito User Pool ID"
+    Value: !Ref CognitoUserPool
+
+  CognitoUserPoolClientId:
+    Description: "Cognito User Pool Client ID"
+    Value: !Ref CognitoUserPoolClient
